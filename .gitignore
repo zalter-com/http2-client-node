@@ -1,0 +1,7 @@
+# Production
+node_modules
+package-lock.json
+
+# Misc
+.idea
+.DS_Store
