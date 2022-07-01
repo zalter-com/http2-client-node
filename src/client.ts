@@ -1,31 +1,31 @@
-import { Readable } from 'stream';
-import { connect, constants as http2Constants } from 'http2';
-
-const { HTTP2_HEADER_CONTENT_TYPE } = http2Constants;
+import { ClientHttp2Session, connect } from 'http2';
 
 // TODO: Maybe implement session connection retry on error, goaway, etc.
 
-/**
- * @typedef RequestOptions
- * @property {Object<string, *>} headers
- * @property {string | Readable} body
- * @property {number} [timeout]
- */
+export type Headers = Record<string, any>;
 
-/**
- * @typedef Response
- * @property {Object<string, *>} headers
- * @property {string|Readable} body
- */
+export interface RequestParams {
+  headers?: Headers;
+  body?: string | Uint8Array | ArrayBuffer;
+  timeout?: number;
+}
+
+export interface Response {
+  headers: Headers;
+  body?: Buffer;
+}
+
+interface ClientOptions {}
 
 export class Client {
-  /**
-   * Caching strategy for sessions
-   * @type {Map<any, any>}
-   */
-  #sessionPool = new Map();
+  /** Caching strategy for sessions */
+  #sessionPool = new Map<string, ClientHttp2Session>();
 
-  constructor() {}
+  #options: ClientOptions = {};
+
+  constructor(options?: ClientOptions) {
+    this.#options = options || {};
+  }
 
   /**
    * Destroys the existing sessions in the client.
@@ -42,18 +42,20 @@ export class Client {
    * Makes the request to the provided authority, returning either a promise with the result or
    * a promise with the unopened data stream depending on the server response.
    * @param {string} authority
-   * @param {RequestOptions} options
+   * @param {Object} params
    * @return {Promise<Response>}
    */
-  request(authority, options = {}) {
-    const { body } = options;
+  request(authority: string, params: RequestParams = {}) {
+    const { body } = params;
 
-    if (body && typeof body !== 'string' && !(body instanceof Readable)) {
-      throw new Error('Invalid body type');
+    if (body) {
+      if (!(typeof body === 'string' || body instanceof Uint8Array || body instanceof ArrayBuffer)) {
+        throw new Error('Invalid body type');
+      }
     }
 
     return new Promise(async (resolve, reject) => {
-      let session;
+      let session: ClientHttp2Session;
 
       try {
         session = await this.#getSession(authority);
@@ -62,15 +64,15 @@ export class Client {
         return;
       }
 
-      const stream = session.request(options.headers, { endStream: false });
+      const stream = session.request(params.headers, { endStream: false });
       let responded = false;
 
-      if (options.timeout) {
-        stream.setTimeout(options.timeout, () => {
+      if (params.timeout) {
+        stream.setTimeout(params.timeout, () => {
           if (!responded) {
             stream.close();
-            const timeoutError = new Error(`Stream timed out because of no activity for ${options.timeout} ms`);
-            timeoutError.name = "TimeoutError";
+            const timeoutError = new Error(`Stream timed out because of no activity for ${params.timeout} ms`);
+            timeoutError.name = 'TimeoutError';
             reject(timeoutError);
           }
         });
@@ -85,13 +87,9 @@ export class Client {
           stream.end();
         }
 
-        if (typeof body === 'string') {
+        if (typeof body === 'string' || body instanceof Uint8Array || body instanceof ArrayBuffer) {
           stream.write(body);
           stream.end();
-        }
-
-        if (body instanceof Readable) {
-          body.pipe(stream);
         }
       };
 
@@ -104,24 +102,16 @@ export class Client {
       stream.on('response', (headers) => {
         responded = true;
 
-        if (headers[HTTP2_HEADER_CONTENT_TYPE]?.includes('stream')) {
-          resolve({
-            headers,
-            body: stream
-          });
-          return;
-        }
-
-        let data;
+        const chunks: Array<Buffer> = [];
 
         stream.on('data', (chunk) => {
-          data = (data || '') + chunk;
+          chunks.push(chunk);
         });
 
         stream.on('end', () => {
           resolve({
             headers,
-            body: data
+            body: Buffer.concat(chunks)
           });
         });
       });
@@ -132,9 +122,9 @@ export class Client {
    * Gets the memoized session by its authority
    * @private
    * @param {string} authority
-   * @return {Promise<>}
+   * @return {Promise<ClientHttp2Session | undefined>}
    */
-  #getSession(authority) {
+  #getSession(authority: string): Promise<ClientHttp2Session | undefined> {
     return new Promise((resolve, reject) => {
       let session;
 
