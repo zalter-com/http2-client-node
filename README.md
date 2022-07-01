@@ -16,6 +16,6 @@ const response = await client.request('https://domain.example', {
   body: JSON.stringify({ name: 'John' })
 });
 
-const data = JSON.parse(response.body);
+const data = response.body; // Buffer
 console.log(`Received response status: ${response.headers[':status']}`); 
 ```
