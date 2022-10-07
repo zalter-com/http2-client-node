@@ -1,7 +1,7 @@
 {
   "name": "@zalter/http2-client-node",
   "author": "Zalter",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": false,
   "license": "MIT",
   "description": "A thin layer over Node.js HTTP/2 client",
